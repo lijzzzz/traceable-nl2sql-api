@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>可追溯NL2SQL交互系统</title>
+    <!-- Tailwind CSS + Font Awesome -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Mermaid 流程图库 -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        .sql-highlight { background-color: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.9rem; overflow-x: auto; white-space: pre-wrap; }
+        .step-card { border-left: 4px solid #3b82f6; transition: all 0.2s; }
+        .step-card:hover { background-color: #f8fafc; }
+        .observation { border-left-color: #10b981; }
+        .loading { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }
+        th { background-color: #f1f5f9; font-weight: 600; }
+        .trace-panel { max-height: 500px; overflow-y: auto; }
+        .history-item { cursor: pointer; transition: background 0.2s; }
+        .history-item:hover { background-color: #eef2ff; }
+        #flowchartContainer svg { max-width: 100%; height: auto; background: white; border-radius: 8px; }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans">
+
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <!-- 头部 -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">🔍 可追溯NL2SQL交互系统</h1>
+            <p class="text-gray-600 mt-2">基于大语言模型的自然语言转SQL · 过程完全可追溯</p>
+            <div class="mt-2 inline-flex items-center gap-2 bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
+                <i class="fas fa-database"></i> 支持数据库：activity_1, academic ...
+            </div>
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- 左侧：历史查询列表 -->
+            <div class="lg:w-1/4 bg-white rounded-xl shadow-md p-4 h-fit">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-lg font-semibold text-gray-800"><i class="fas fa-history mr-2"></i>历史查询</h2>
+                    <button id="refreshHistoryBtn" class="text-blue-500 hover:text-blue-700 text-sm"><i class="fas fa-sync-alt"></i> 刷新</button>
+                </div>
+                <div id="historyList" class="space-y-2 max-h-96 overflow-y-auto">
+                    <div class="text-gray-400 text-center py-4">暂无历史记录</div>
+                </div>
+            </div>
+
+            <!-- 右侧：查询与结果 -->
+            <div class="lg:w-3/4">
+                <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+                    <div class="grid md:grid-cols-3 gap-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-gray-700 font-medium mb-1">📝 自然语言问题</label>
+                            <input type="text" id="question" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500"
+                                   placeholder="例如：What are the names of all students?" value="What are the names of all students?">
+                        </div>
+                        <div>
+                            <label class="block text-gray-700 font-medium mb-1">🗄️ 数据库 ID（可选）</label>
+                            <input type="text" id="db_id" class="w-full border border-gray-300 rounded-lg px-4 py-2" placeholder="activity_1" value="activity_1">
+                        </div>
+                    </div>
+                    <div class="mt-4 flex justify-end gap-3">
+                        <button id="queryBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition flex items-center gap-2">
+                            <i class="fas fa-paper-plane"></i> 执行查询
+                        </button>
+                        <button id="exportBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-6 rounded-lg transition flex items-center gap-2" disabled>
+                            <i class="fas fa-download"></i> 导出结果
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 加载动画 -->
+                <div id="loading" class="hidden fixed inset-0 bg-black/20 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-lg p-6 flex flex-col items-center gap-3 shadow-xl">
+                        <div class="loading"></div>
+                        <span class="text-gray-700">正在调用大模型生成 SQL...</span>
+                    </div>
+                </div>
+
+                <!-- 结果展示区 -->
+                <div id="resultArea" class="space-y-6"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 此处 JavaScript 完全保持不变，功能没有任何改动
+        const API_BASE = "http://localhost:8000";
+        let currentResultData = null;
+        let currentTraceId = null;
+
+        const queryBtn = document.getElementById('queryBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const loadingDiv = document.getElementById('loading');
+        const resultArea = document.getElementById('resultArea');
+        const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
+        const historyListDiv = document.getElementById('historyList');
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            });
+        }
+
+        async function loadHistory() {
+            try {
+                const res = await fetch(`${API_BASE}/traces?limit=20`);
+                if (!res.ok) throw new Error();
+                const traces = await res.json();
+                if (traces.length === 0) {
+                    historyListDiv.innerHTML = '<div class="text-gray-400 text-center py-4">暂无历史记录</div>';
+                    return;
+                }
+                let html = '';
+                for (const t of traces) {
+                    const shortId = t.trace_id.substring(0, 8) + '...';
+                    const time = new Date(t.timestamp).toLocaleString();
+                    html += `
+                        <div class="history-item p-2 rounded-lg border border-gray-100 hover:bg-blue-50" data-trace-id="${t.trace_id}">
+                            <div class="font-mono text-xs text-gray-500">${shortId}</div>
+                            <div class="text-sm text-gray-800 truncate">${escapeHtml(t.question.substring(0, 50))}</div>
+                            <div class="text-xs text-gray-400">${time}</div>
+                        </div>
+                    `;
+                }
+                historyListDiv.innerHTML = html;
+                document.querySelectorAll('.history-item').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const traceId = el.getAttribute('data-trace-id');
+                        loadResultByTraceId(traceId);
+                    });
+                });
+            } catch (err) {
+                console.error("加载历史失败", err);
+            }
+        }
+
+        async function loadResultByTraceId(traceId) {
+            loadingDiv.classList.remove('hidden');
+            try {
+                const res = await fetch(`${API_BASE}/query_result/${traceId}`);
+                if (!res.ok) throw new Error('无法获取完整结果');
+                const data = await res.json();
+                renderResult(data);
+            } catch (err) {
+                alert(err.message);
+            } finally {
+                loadingDiv.classList.add('hidden');
+            }
+        }
+
+        function renderResult(data) {
+            currentResultData = data;
+            currentTraceId = data.trace_id;
+            exportBtn.disabled = false;
+
+            let tableHtml = '';
+            if (data.execution_result && data.execution_result.length > 0) {
+                const columns = Object.keys(data.execution_result[0]).map(k => ({ key: k, label: `列 ${k}` }));
+                if (data.data_structure && Object.keys(data.data_structure).length > 0) {
+                    for (let i = 0; i < Object.keys(data.data_structure).length; i++) {
+                        const key = Object.keys(data.data_structure)[i];
+                        if (!columns.find(c => c.key === key)) {
+                            columns.push({ key, label: `列 ${key}` });
+                        }
+                    }
+                }
+                tableHtml = `
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full">
+                            <thead>
+                                <tr>
+                                    ${columns.map(col => `<th class="px-4 py-2">${col.label}<br><span class="text-xs font-normal text-gray-500">${data.data_structure?.[col.key] || '未知'}</span></th>`).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.execution_result.map(row => `
+                                    <tr class="hover:bg-gray-50">
+                                        ${columns.map(col => `<td class="px-4 py-2">${row[col.key] !== undefined ? row[col.key] : ''}</td>`).join('')}
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            } else {
+                tableHtml = `<div class="text-gray-500 italic">无数据返回</div>`;
+            }
+
+            const html = `
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="border-b border-gray-200 bg-gray-50 px-6 py-3">
+                        <h2 class="text-xl font-semibold text-gray-800"><i class="fas fa-check-circle text-green-500 mr-2"></i>查询结果</h2>
+                    </div>
+                    <div class="p-6 space-y-5">
+                        <div>
+                            <h3 class="text-lg font-medium text-gray-800 mb-2"><i class="fas fa-code mr-2 text-blue-500"></i>生成的 SQL</h3>
+                            <div class="sql-highlight">${escapeHtml(data.sql_statement)}</div>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-medium text-gray-800 mb-2"><i class="fas fa-comment-dots mr-2 text-green-500"></i>自然语言描述</h3>
+                            <div class="bg-gray-100 rounded-lg p-4 text-gray-700">${escapeHtml(data.natural_description || '无')}</div>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-medium text-gray-800 mb-2"><i class="fas fa-table mr-2 text-purple-500"></i>数据结构</h3>
+                            <div class="bg-gray-100 rounded-lg p-4 text-sm font-mono">${escapeHtml(JSON.stringify(data.data_structure, null, 2))}</div>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-medium text-gray-800 mb-2"><i class="fas fa-list mr-2 text-orange-500"></i>执行结果 (${data.execution_result?.length || 0} 行)</h3>
+                            ${tableHtml}
+                        </div>
+                        <div class="border-t pt-4 mt-4">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-medium text-gray-800"><i class="fas fa-history mr-2 text-indigo-500"></i>过程追溯</h3>
+                                <div class="flex gap-2">
+                                    <button id="viewTraceBtn" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-4 py-1 rounded-lg text-sm transition flex items-center gap-1">
+                                        <i class="fas fa-eye"></i> 文本步骤
+                                    </button>
+                                    <button id="viewFlowchartBtn" class="bg-green-50 hover:bg-green-100 text-green-700 px-4 py-1 rounded-lg text-sm transition flex items-center gap-1">
+                                        <i class="fas fa-project-diagram"></i> 流程图
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="mt-2 text-sm text-gray-500">
+                                <i class="fas fa-id-card"></i> Trace ID: <span class="font-mono">${data.trace_id}</span>
+                            </div>
+                            <div id="traceDetail" class="mt-3 hidden trace-panel"></div>
+                            <div id="flowchartContainer" class="mt-3 hidden" style="background: white; border-radius: 8px; padding: 16px;"></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            resultArea.innerHTML = html;
+
+            const viewTraceBtn = document.getElementById('viewTraceBtn');
+            if (viewTraceBtn) {
+                viewTraceBtn.addEventListener('click', () => loadTraceDetail(currentTraceId));
+            }
+            const viewFlowchartBtn = document.getElementById('viewFlowchartBtn');
+            if (viewFlowchartBtn) {
+                viewFlowchartBtn.addEventListener('click', () => loadFlowchart(currentTraceId));
+            }
+        }
+
+        async function loadTraceDetail(traceId) {
+            const detailDiv = document.getElementById('traceDetail');
+            const flowchartDiv = document.getElementById('flowchartContainer');
+            if (!detailDiv) return;
+            flowchartDiv.classList.add('hidden');
+            detailDiv.classList.remove('hidden');
+            if (detailDiv.innerHTML.trim() !== '' && !detailDiv.innerHTML.includes('加载中')) {
+                return;
+            }
+            detailDiv.innerHTML = '<div class="text-center py-4"><div class="loading inline-block"></div> 加载中...</div>';
+            try {
+                const response = await fetch(`${API_BASE}/trace/${traceId}`);
+                if (!response.ok) throw new Error('无法获取追溯信息');
+                const trace = await response.json();
+                renderTraceSteps(trace, detailDiv);
+            } catch (error) {
+                detailDiv.innerHTML = `<div class="text-red-500 p-4">加载失败：${error.message}</div>`;
+            }
+        }
+
+        async function loadFlowchart(traceId) {
+            const detailDiv = document.getElementById('traceDetail');
+            const flowchartDiv = document.getElementById('flowchartContainer');
+            if (!flowchartDiv) return;
+            detailDiv.classList.add('hidden');
+            flowchartDiv.classList.remove('hidden');
+            flowchartDiv.innerHTML = '<div class="text-center py-4"><div class="loading inline-block"></div> 生成流程图中...</div>';
+            try {
+                const response = await fetch(`${API_BASE}/trace/${traceId}/flowchart`);
+                if (!response.ok) throw new Error('无法获取流程图');
+                const data = await response.json();
+                const flowchartCode = data.flowchart;
+                const { svg } = await mermaid.render('mermaid-svg', flowchartCode);
+                flowchartDiv.innerHTML = `<div class="overflow-x-auto">${svg}</div>`;
+            } catch (error) {
+                flowchartDiv.innerHTML = `<div class="text-red-500 p-4">流程图生成失败：${error.message}</div>`;
+            }
+        }
+
+        function renderTraceSteps(trace, container) {
+            const steps = trace.intermediate_steps || [];
+            if (steps.length === 0) {
+                container.innerHTML = '<div class="text-gray-500 italic p-4">无中间步骤记录</div>';
+                return;
+            }
+            let html = '<div class="space-y-3">';
+            let round = 0;
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                if (step.type === 'assistant') {
+                    round++;
+                    html += `
+                        <div class="step-card bg-gray-50 rounded-lg p-3">
+                            <div class="font-semibold text-blue-700 flex items-center gap-2">
+                                <i class="fas fa-brain"></i> 第 ${round} 轮思考
+                            </div>
+                            <div class="mt-1 text-gray-700"><span class="font-medium">💭 思考：</span>${escapeHtml(step.thought || '')}</div>
+                            <div class="mt-1 text-gray-700"><span class="font-medium">⚡ 行动：</span><code class="bg-gray-200 px-1 rounded">${escapeHtml(step.action || '')}</code></div>
+                        </div>
+                    `;
+                } else if (step.type === 'observation') {
+                    html += `
+                        <div class="step-card observation bg-green-50 rounded-lg p-3">
+                            <div class="font-semibold text-green-700 flex items-center gap-2">
+                                <i class="fas fa-eye"></i> 观察结果
+                            </div>
+                            <div class="mt-1 text-gray-700 text-sm font-mono whitespace-pre-wrap">${escapeHtml(step.content || '')}</div>
+                        </div>
+                    `;
+                }
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        async function executeQuery() {
+    const question = document.getElementById('question').value.trim();
+    const db_id = document.getElementById('db_id').value.trim() || "activity_1";
+    if (!question) {
+        alert("请输入自然语言问题");
+        return;
+    }
+
+    // 创建 AbortController 用于超时控制
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000); // 180秒超时
+
+    loadingDiv.classList.remove('hidden');
+    resultArea.innerHTML = '';
+
+    try {
+        const response = await fetch(`${API_BASE}/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, db_id }),
+            signal: controller.signal  // 关键：绑定 abort 信号
+        });
+        clearTimeout(timeoutId);  // 清除超时定时器
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        renderResult(data);
+        loadHistory();
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            resultArea.innerHTML = `
+                <div class="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700">
+                    <i class="fas fa-hourglass-half mr-2"></i> 请求超时：模型推理时间较长，请稍后重试或简化问题。
+                </div>
+            `;
+        } else {
+            resultArea.innerHTML = `
+                <div class="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700">
+                    <i class="fas fa-exclamation-triangle mr-2"></i> 请求失败：${error.message}
+                </div>
+            `;
+        }
+    } finally {
+        loadingDiv.classList.add('hidden');
+    }
+}
+
+        function exportResult(format = 'json') {
+            if (!currentResultData) {
+                alert("没有可导出的结果");
+                return;
+            }
+            const data = currentResultData;
+            if (format === 'json') {
+                const jsonStr = JSON.stringify(data, null, 2);
+                const blob = new Blob([jsonStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `nl2sql_result_${data.trace_id}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } else if (format === 'csv') {
+                const rows = data.execution_result || [];
+                if (rows.length === 0) {
+                    alert("无数据可导出为 CSV");
+                    return;
+                }
+                const headers = Object.keys(rows[0]);
+                const csvRows = [headers.join(',')];
+                for (const row of rows) {
+                    const values = headers.map(h => {
+                        let val = row[h];
+                        if (val === undefined) val = '';
+                        if (typeof val === 'string' && (val.includes(',') || val.includes('"'))) {
+                            val = `"${val.replace(/"/g, '""')}"`;
+                        }
+                        return val;
+                    });
+                    csvRows.push(values.join(','));
+                }
+                const csvStr = csvRows.join('\n');
+                const blob = new Blob([csvStr], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `nl2sql_result_${data.trace_id}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        queryBtn.addEventListener('click', executeQuery);
+        exportBtn.addEventListener('click', () => exportResult('json'));
+        refreshHistoryBtn.addEventListener('click', loadHistory);
+
+        const csvBtn = document.createElement('button');
+        csvBtn.innerHTML = '<i class="fas fa-file-csv"></i> CSV';
+        csvBtn.className = 'bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg transition flex items-center gap-2';
+        csvBtn.addEventListener('click', () => exportResult('csv'));
+        exportBtn.parentNode.appendChild(csvBtn);
+
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        loadHistory();
+    </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Web 服务
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0
+python-dotenv>=1.0
+
+# LLM / Embedding
+openai>=1.0
+tenacity>=8.0
+tiktoken>=0.5
+
+# 检索与向量库
+chromadb>=0.4
+elasticsearch>=8.0
+networkx>=3.0
+
+# 工具与通用
+loguru>=0.7
+fire>=0.5
+func_timeout>=4.3
+sqlparse>=0.4
+requests>=2.28
+tqdm>=4.65

@@ -1,0 +1,45 @@
+# ---- 密钥与环境变量（切勿提交真实 key）----
+.env
+*.env
+!.env.example
+
+# ---- Python 缓存与虚拟环境 ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ---- 运行时产物：查询轨迹与追溯日志 ----
+api_traces/
+traces.db
+*.db-journal
+
+# ---- 向量库与缓存 ----
+database/db_chroma_spider/
+database/db_chroma_bird/
+database/cache_vector_db/
+database/cache_vector_query/
+.cache/
+.tmp/
+logs/
+
+# ---- 大规模数据集（体积过大，请按 README 自行下载放置）----
+dataset/
+dataset_processed/
+dataset/*.zip
+*.zip
+
+# ---- 实验与评估产物 ----
+evaluation/
+experiment/
+exp_main_spider/
+save-crossdb-infer-dialog/
+*.log
+
+# ---- IDE / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
